@@ -7,7 +7,10 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { PokerCard } from "@/components/poker-card"
 import { WalletConnection } from "@/components/wallet-connection"
+import { UniversalWalletConnect } from "@/components/universal-wallet-connect"
+import { OnChainPoker } from "@/components/on-chain-poker"
 import { useWallet } from "@/hooks/use-wallet"
+import { useAccount } from 'wagmi'
 import { createDeck, shuffleDeck } from "@/lib/deck-utils"
 import type { Player, GameState, PokerAction } from "@/types/poker"
 import { Bot, User, Play, RotateCcw, Wallet, TestTube, Zap } from "lucide-react"
@@ -35,7 +38,13 @@ export default function PokerGame() {
     spendFunds,
     balance, // Add balance to get wallet amount
   } = useWallet()
+  
+  const { isConnected: wagmiConnected } = useAccount()
+  
+  // Use wagmi connection status if available, otherwise fall back to custom wallet
+  const actuallyConnected = wagmiConnected || isConnected
 
+  const [gameMode, setGameMode] = useState<'select' | 'ai' | 'onchain'>('select')
   const [lastAction, setLastAction] = useState("")
   const [actionCount, setActionCount] = useState(0)
   const [winner, setWinner] = useState<{
@@ -1111,13 +1120,13 @@ export default function PokerGame() {
     setActionCount(0)
   }
 
-  // Auto-initialize when wallet connects
+  // Auto-initialize when wallet connects and AI mode is selected
   useEffect(() => {
-    if (isConnected && !isInGame) {
-      console.log("Wallet connected, auto-joining game...")
+    if (actuallyConnected && !isInGame && gameMode === 'ai') {
+      console.log("Wallet connected, auto-joining AI game...")
       joinGame()
     }
-  }, [isConnected])
+  }, [actuallyConnected, gameMode])
 
   const humanPlayer = gameState.players.find((p) => p.isHuman)
   const callAmount = gameState.currentBet - (humanPlayer?.currentBet || 0)
@@ -1157,7 +1166,7 @@ export default function PokerGame() {
               <p className="text-gray-300 text-sm">Play poker with AI opponents</p>
             </div>
           </div>
-          {isConnected && <WalletConnection />}
+          {actuallyConnected && <UniversalWalletConnect />}
         </div>
 
         {/* Game Status */}
@@ -1197,7 +1206,7 @@ export default function PokerGame() {
         </Card>
 
         {/* Simulation Notice */}
-        {isConnected && isSimulated && (
+        {actuallyConnected && isSimulated && (
           <Card className="mb-4 p-3 bg-yellow-900/20 border-yellow-600/50">
             <div className="flex items-center space-x-3">
               <Zap className="w-4 h-4 text-yellow-400" />
@@ -1234,67 +1243,151 @@ export default function PokerGame() {
           </div>
         )}
 
-        {!isConnected ? (
-          /* Wallet Selection */
+        {!actuallyConnected ? (
+          /* Wallet Connection */
           <Card className="p-8 text-center bg-slate-800/50 border-slate-700">
-            <h2 className="text-2xl font-bold text-white mb-4">Choose Your Wallet</h2>
-            <p className="text-gray-300 mb-8">Connect your Coinbase wallet or use our simulation wallet for testing</p>
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-bold text-white mb-4">Connect Your Wallet</h2>
+                <p className="text-gray-300 mb-8">
+                  Connect any supported wallet to start playing Web3 poker with NFT chips
+                </p>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-              <Card className="p-6 bg-slate-700/50 border-slate-600 hover:border-blue-500 transition-colors">
-                <div className="text-center space-y-4">
-                  <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto">
-                    <Wallet className="w-8 h-8 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-semibold text-white mb-2">Coinbase Wallet</h3>
-                    <p className="text-gray-300 text-sm mb-4">
-                      Connect your real Coinbase wallet to play with actual cryptocurrency
-                    </p>
-                  </div>
-                  <Button
-                    onClick={async () => {
-                      const success = await connectRealWallet()
-                      if (!success) {
-                        alert("Failed to connect wallet. Please make sure you have Coinbase Wallet installed.")
-                      }
-                    }}
-                    disabled={isConnecting}
-                    size="lg"
-                    className="w-full bg-blue-600 hover:bg-blue-700"
-                  >
-                    {isConnecting ? "Connecting..." : "Connect Coinbase Wallet"}
-                  </Button>
-                </div>
-              </Card>
+              <div className="flex justify-center">
+                <UniversalWalletConnect />
+              </div>
 
-              <Card className="p-6 bg-slate-700/50 border-slate-600 hover:border-yellow-500 transition-colors">
-                <div className="text-center space-y-4">
-                  <div className="w-16 h-16 bg-yellow-600 rounded-full flex items-center justify-center mx-auto">
-                    <TestTube className="w-8 h-8 text-white" />
+              <div className="mt-8 p-4 bg-slate-700/50 rounded-lg">
+                <h3 className="text-white font-semibold mb-3">Supported Wallets</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex items-center space-x-2 text-gray-300">
+                    <span className="text-lg">🦊</span>
+                    <span className="text-sm">MetaMask</span>
                   </div>
-                  <div>
-                    <h3 className="text-xl font-semibold text-white mb-2">Simulation Wallet</h3>
-                    <p className="text-gray-300 text-sm mb-4">
-                      Perfect for testing. Play with simulated funds without real money
-                    </p>
+                  <div className="flex items-center space-x-2 text-gray-300">
+                    <span className="text-lg">🔵</span>
+                    <span className="text-sm">Coinbase Wallet</span>
                   </div>
-                  <Button
-                    onClick={connectSimulationWallet}
-                    disabled={isConnecting}
-                    size="lg"
-                    className="w-full bg-yellow-600 hover:bg-yellow-700"
-                  >
-                    {isConnecting ? "Setting up..." : "Use Simulation Wallet"}
-                  </Button>
+                  <div className="flex items-center space-x-2 text-gray-300">
+                    <span className="text-lg">🔗</span>
+                    <span className="text-sm">WalletConnect</span>
+                  </div>
                 </div>
-              </Card>
+              </div>
+
+              <div className="text-xs text-gray-400 space-y-1">
+                <p>• Make sure you're connected to Base Sepolia testnet</p>
+                <p>• You'll need some testnet ETH to mint poker chips</p>
+                <p>• All transactions are on-chain and verifiable</p>
+              </div>
             </div>
           </Card>
+        ) : gameMode === 'select' ? (
+          /* Game Mode Selection */
+          <Card className="p-8 text-center bg-slate-800/50 border-slate-700">
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-bold text-white mb-4">Choose Game Mode</h2>
+                <p className="text-gray-300 mb-8">
+                  Select how you want to play poker
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+                <Card className="p-6 bg-slate-700/50 border-slate-600 hover:border-purple-500 transition-colors cursor-pointer" 
+                      onClick={() => setGameMode('ai')}>
+                  <div className="text-center space-y-4">
+                    <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center mx-auto">
+                      <Bot className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-semibold text-white mb-2">🤖 AI Poker Game</h3>
+                      <p className="text-gray-300 text-sm mb-4">
+                        Play against intelligent AI opponents with simulated chips. Perfect for practice and fun!
+                      </p>
+                      <div className="space-y-2">
+                        <Badge variant="outline" className="text-green-400 border-green-500">
+                          Instant Play
+                        </Badge>
+                        <Badge variant="outline" className="text-blue-400 border-blue-500">
+                          No Gas Fees
+                        </Badge>
+                        <Badge variant="outline" className="text-purple-400 border-purple-500">
+                          Smart AI
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="p-6 bg-slate-700/50 border-slate-600 hover:border-green-500 transition-colors cursor-pointer"
+                      onClick={() => setGameMode('onchain')}>
+                  <div className="text-center space-y-4">
+                    <div className="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center mx-auto">
+                      <Zap className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-semibold text-white mb-2">⛓️ On-Chain Poker</h3>
+                      <p className="text-gray-300 text-sm mb-4">
+                        Play with real NFT chips on the blockchain. True Web3 gaming with verifiable results!
+                      </p>
+                      <div className="space-y-2">
+                        <Badge variant="outline" className="text-green-400 border-green-500">
+                          NFT Chips
+                        </Badge>
+                        <Badge variant="outline" className="text-blue-400 border-blue-500">
+                          Blockchain Verified
+                        </Badge>
+                        <Badge variant="outline" className="text-yellow-400 border-yellow-500">
+                          Real Stakes
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              <div className="text-xs text-gray-400 space-y-1 mt-6">
+                <p>• AI Mode: Play instantly with simulated chips and smart AI opponents</p>
+                <p>• On-Chain Mode: Mint NFT chips, create/join games, play on Base Sepolia</p>
+              </div>
+            </div>
+          </Card>
+        ) : gameMode === 'onchain' ? (
+          /* On-Chain Poker Mode */
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Button 
+                variant="outline" 
+                onClick={() => setGameMode('select')}
+                className="border-gray-500 text-gray-300 hover:bg-gray-700"
+              >
+                ← Back to Game Selection
+              </Button>
+            </div>
+            
+            <OnChainPoker />
+          </div>
         ) : gameState.gamePhase === "ready" ? (
           /* Start Game Screen */
-          <Card className="p-8 text-center bg-slate-800/50 border-slate-700">
-            <h2 className="text-2xl font-bold text-white mb-4">Ready to Start</h2>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setGameMode('select')
+                  resetGame()
+                }}
+                className="border-gray-500 text-gray-300 hover:bg-gray-700"
+              >
+                ← Back to Game Selection
+              </Button>
+              <Badge className="bg-purple-600">🤖 AI Poker Mode</Badge>
+            </div>
+            
+            <Card className="p-8 text-center bg-slate-800/50 border-slate-700">
+              <h2 className="text-2xl font-bold text-white mb-4">Ready to Start</h2>
             <p className="text-gray-300 mb-6">Players are seated. Let's deal the cards and begin playing!</p>
             <div className="mb-6">
               <div className="flex justify-center space-x-4">
@@ -1315,10 +1408,26 @@ export default function PokerGame() {
               <Play className="w-5 h-5 mr-2" />
               Start Game
             </Button>
-          </Card>
+            </Card>
+          </div>
         ) : (
           /* MAIN POKER GAME */
-          <div className="grid grid-cols-12 gap-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setGameMode('select')
+                  resetGame()
+                }}
+                className="border-gray-500 text-gray-300 hover:bg-gray-700"
+              >
+                ← Back to Game Selection
+              </Button>
+              <Badge className="bg-purple-600">🤖 AI Poker Mode</Badge>
+            </div>
+            
+            <div className="grid grid-cols-12 gap-4">
             {/* Game Status - Top */}
             <div className="col-span-12 grid grid-cols-4 gap-2">
               <Card className="p-2 bg-green-900/20 border-green-600/50">
@@ -1622,6 +1731,7 @@ export default function PokerGame() {
               </Card>
             </div>
           </div>
+        </div>
         )}
       </div>
     </div>

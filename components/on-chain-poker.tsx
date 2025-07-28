@@ -36,12 +36,43 @@ interface GameData {
 export function OnChainPoker() {
   const { address, isConnected } = useAccount()
   const { writeContract, data: hash, isPending, error } = useWriteContract()
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash })
+  const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt } = useWaitForTransactionReceipt({ hash })
+
+  // Handle successful transaction to update game state
+  useEffect(() => {
+    if (isConfirmed && hash && receipt) {
+      // Refresh contract data after successful transaction
+      console.log('Transaction confirmed:', hash)
+      console.log('Receipt:', receipt)
+      
+      // Try to extract game ID from logs for GameCreated event
+      if (receipt.logs && receipt.logs.length > 0) {
+        // Look for GameCreated event (first topic should match event signature)
+        const gameCreatedLog = receipt.logs.find(log => 
+          log.topics && log.topics.length > 1 && log.address?.toLowerCase() === CONTRACTS.SIMPLE_POKER_GAME?.toLowerCase()
+        )
+        
+        if (gameCreatedLog && gameCreatedLog.topics && gameCreatedLog.topics[1]) {
+          // The gameId is the first indexed parameter (topics[1])
+          const extractedGameId = parseInt(gameCreatedLog.topics[1], 16).toString()
+          console.log('Extracted game ID:', extractedGameId)
+          setCreatedGameId(extractedGameId)
+          setGameId(extractedGameId) // Auto-populate the join game field
+        }
+      }
+      
+      setShowGameCreated(true)
+      // Hide the success message after 10 seconds
+      setTimeout(() => setShowGameCreated(false), 10000)
+      // The contract reads should automatically refetch due to wagmi's caching
+    }
+  }, [isConfirmed, hash, receipt])
 
   const [selectedChips, setSelectedChips] = useState<number[]>([])
   const [gameId, setGameId] = useState<string>('')
   const [mintTier, setMintTier] = useState<'common' | 'rare' | 'epic'>('common')
-  const [currentGameId, setCurrentGameId] = useState<bigint | null>(null)
+  const [showGameCreated, setShowGameCreated] = useState(false)
+  const [createdGameId, setCreatedGameId] = useState<string>('')
 
   // Read user's chips
   const { data: userChips } = useReadContract({
@@ -75,8 +106,8 @@ export function OnChainPoker() {
     address: CONTRACTS.SIMPLE_POKER_GAME,
     abi: SIMPLE_POKER_GAME_ABI,
     functionName: 'getGame',
-    args: playerCurrentGame && playerCurrentGame > 0n ? [playerCurrentGame] : undefined,
-    query: { enabled: !!playerCurrentGame && playerCurrentGame > 0n }
+    args: playerCurrentGame && playerCurrentGame > BigInt(0) ? [playerCurrentGame] : undefined,
+    query: { enabled: !!playerCurrentGame && playerCurrentGame > BigInt(0) }
   }) as { data: GameData | undefined }
 
   // Read player status in current game
@@ -84,8 +115,8 @@ export function OnChainPoker() {
     address: CONTRACTS.SIMPLE_POKER_GAME,
     abi: SIMPLE_POKER_GAME_ABI,
     functionName: 'getPlayerStatus',
-    args: playerCurrentGame && playerCurrentGame > 0n && address ? [playerCurrentGame, address] : undefined,
-    query: { enabled: !!playerCurrentGame && playerCurrentGame > 0n && !!address }
+    args: playerCurrentGame && playerCurrentGame > BigInt(0) && address ? [playerCurrentGame, address] : undefined,
+    query: { enabled: !!playerCurrentGame && playerCurrentGame > BigInt(0) && !!address }
   })
 
   // Mint a poker chip
@@ -113,7 +144,7 @@ export function OnChainPoker() {
       args: [
         parseEther('0.001'), // smallBlind
         parseEther('0.002'), // bigBlind
-        4n // maxPlayers
+        BigInt(4) // maxPlayers
       ]
     })
   }
@@ -134,13 +165,13 @@ export function OnChainPoker() {
 
   // Perform poker action
   const performAction = async (action: number, amount?: bigint) => {
-    if (!playerCurrentGame || playerCurrentGame === 0n) return
+    if (!playerCurrentGame || playerCurrentGame === BigInt(0)) return
 
     writeContract({
       address: CONTRACTS.SIMPLE_POKER_GAME,
       abi: SIMPLE_POKER_GAME_ABI,
       functionName: 'performAction',
-      args: [playerCurrentGame, action, amount || 0n]
+      args: [playerCurrentGame, action, amount || BigInt(0)]
     })
   }
 
@@ -148,6 +179,16 @@ export function OnChainPoker() {
     const values = { common: '0.01', rare: '0.05', epic: '0.1' }
     return values[tier]
   }
+
+  // Calculate total value of selected chips (assuming all chips are common for now)
+  // In a real implementation, you'd need to fetch each chip's individual value
+  const calculateSelectedChipsValue = () => {
+    // Simplified: assume all chips are common (0.01 ETH each)
+    // TODO: This should fetch actual chip values from contract
+    return selectedChips.length * 0.01
+  }
+
+  const MINIMUM_BUY_IN = 0.002 * 20 // bigBlind * 20 = 0.04 ETH
 
   const getActionName = (actionNum: number) => {
     const actions = ['NONE', 'FOLD', 'CHECK', 'CALL', 'RAISE', 'ALL_IN']
@@ -278,8 +319,8 @@ export function OnChainPoker() {
                 <p className="text-gray-300">Total Chips: {(userChips as readonly bigint[]).length}</p>
                 <p className="text-gray-300">Active Chips: {activeChips ? (activeChips as readonly bigint[]).length : 0}</p>
                 <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
-                  {(userChips as readonly bigint[]).map((chipId) => (
-                    <div key={chipId.toString()} className="p-2 bg-slate-700 rounded text-sm">
+                  {(userChips as readonly bigint[]).map((chipId, index) => (
+                    <div key={`chip-${chipId.toString()}-${index}`} className="p-2 bg-slate-700 rounded text-sm">
                       <span className="text-yellow-400">Chip #{chipId.toString()}</span>
                     </div>
                   ))}
@@ -305,6 +346,24 @@ export function OnChainPoker() {
                 {isPending ? 'Creating...' : 'Create New Game'}
               </Button>
 
+              {showGameCreated && (
+                <div className="p-3 bg-green-900/20 border border-green-600/50 rounded-lg">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle className="w-5 h-5 text-green-400" />
+                    <div>
+                      <h4 className="text-green-400 font-semibold">Game Created Successfully!</h4>
+                      <p className="text-green-200 text-sm">
+                        {createdGameId ? (
+                          <>Game ID <span className="font-bold text-green-300">#{createdGameId}</span> has been created and auto-populated below. Select your chips and click "Join Game" to start playing!</>
+                        ) : (
+                          <>Your game has been created. The Game ID should auto-populate below. Select your chips and join the game!</>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label className="text-white">Join Existing Game</Label>
                 <Input
@@ -318,9 +377,12 @@ export function OnChainPoker() {
               {activeChips && (activeChips as readonly bigint[]).length > 0 && (
                 <div className="space-y-2">
                   <Label className="text-white">Select Chips to Play With</Label>
+                  <p className="text-gray-400 text-xs">
+                    Minimum required: {MINIMUM_BUY_IN.toFixed(3)} ETH (4 Common, 1 Rare, or 1 Epic chip)
+                  </p>
                   <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
-                    {(activeChips as readonly bigint[]).map((chipId) => (
-                      <label key={chipId.toString()} className="flex items-center space-x-2">
+                    {(activeChips as readonly bigint[]).map((chipId, index) => (
+                      <label key={`active-chip-${chipId.toString()}-${index}`} className="flex items-center space-x-2">
                         <input
                           type="checkbox"
                           checked={selectedChips.includes(Number(chipId))}
@@ -340,20 +402,38 @@ export function OnChainPoker() {
                 </div>
               )}
 
+              {/* Minimum buy-in validation */}
+              {selectedChips.length > 0 && calculateSelectedChipsValue() < MINIMUM_BUY_IN && (
+                <div className="p-3 bg-red-900/20 border border-red-600/50 rounded-lg">
+                  <div className="flex items-center space-x-2">
+                    <AlertCircle className="w-5 h-5 text-red-400" />
+                    <div>
+                      <h4 className="text-red-400 font-semibold">Insufficient Chip Value</h4>
+                      <p className="text-red-200 text-sm">
+                        Selected: {calculateSelectedChipsValue().toFixed(3)} ETH | Required: {MINIMUM_BUY_IN.toFixed(3)} ETH
+                      </p>
+                      <p className="text-red-200 text-xs mt-1">
+                        You need at least 4 Common chips, 1 Rare chip, or 1 Epic chip to join.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Button 
                 onClick={joinGame}
-                disabled={isPending || !gameId || selectedChips.length === 0}
-                className="w-full bg-purple-600 hover:bg-purple-700"
+                disabled={isPending || !gameId || selectedChips.length === 0 || calculateSelectedChipsValue() < MINIMUM_BUY_IN}
+                className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
                 size="lg"
               >
-                {isPending ? 'Joining...' : 'Join Game'}
+                {isPending ? 'Joining...' : `Join Game (Min: ${MINIMUM_BUY_IN.toFixed(3)} ETH)`}
               </Button>
             </div>
           </Card>
         </TabsContent>
 
         <TabsContent value="play" className="space-y-4">
-          {playerCurrentGame && playerCurrentGame > 0n ? (
+          {playerCurrentGame && playerCurrentGame > BigInt(0) ? (
             <Card className="p-6 bg-slate-800/50 border-slate-700">
               <h3 className="text-lg font-semibold text-white mb-4">Current Game #{playerCurrentGame.toString()}</h3>
               
@@ -375,13 +455,13 @@ export function OnChainPoker() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center p-3 bg-slate-700 rounded">
                       <div className="text-yellow-400 font-bold text-xl">
-                        {formatEther(gameData.pot)} ETH
+                        {gameData.pot ? formatEther(gameData.pot) : '0.000'} ETH
                       </div>
                       <div className="text-gray-300 text-sm">Pot</div>
                     </div>
                     <div className="text-center p-3 bg-slate-700 rounded">
                       <div className="text-purple-400 font-bold text-xl">
-                        {formatEther(gameData.currentBet)} ETH
+                        {gameData.currentBet ? formatEther(gameData.currentBet) : '0.000'} ETH
                       </div>
                       <div className="text-gray-300 text-sm">Current Bet</div>
                     </div>
